@@ -53,6 +53,12 @@ map<vector<int>, int> allele_count;
 // activities of all allelic classes ever visited during simulation
 map<vector<int>, double> allelic_class_activity;
 
+map<vector<int>, double> allelic_class_A;
+map<vector<int>, double> allelic_class_A2;
+map<vector<int>, double> zn_finger_A;
+map<vector<int>, double> zn_finger_A2;
+
+
 // OPERATIONS ON ALLELES AND ON POPULATION
 
 // attempt to make a new allele and add count copies in current population
@@ -72,6 +78,8 @@ void make_new_allele(const vector<int>& allele, int count) {
     auto jt = allelic_class_activity.find(allelic_class);
     if (jt == allelic_class_activity.end()) {
         allelic_class_activity[allelic_class] = 1.0;
+        allelic_class_A[allelic_class] = 0;
+        allelic_class_A2[allelic_class] = 0;
     }
 }
 
@@ -205,6 +213,22 @@ double get_allelic_class_diversity()    {
         m2 += f*f;
     }
     return 1.0 / m2;
+}
+
+void push_current_allelic_class_freqs() {
+
+    map<vector<int>,int> class_count;
+    int tot = 0;
+    for (auto& p : allele_count)    {
+        auto allelic_class = vector<int>(p.first.begin(), p.first.begin() + Nbind*Nres);
+        class_count[allelic_class] += p.second;
+        tot += p.second;
+    }
+    for (auto& p : class_count) {
+        double f = ((double) p.second) / tot;
+        allelic_class_A[p.first] += f;
+        allelic_class_A2[p.first] += f*f;
+    }
 }
 
 // MAIN PROGRAM
@@ -368,6 +392,8 @@ int main(int argc, char* argv[])    {
             os.flush();
             */
 
+            push_current_allelic_class_freqs();
+
             // save summary statistics
             double R = get_mean_activity();
             meanrec += R;
@@ -383,8 +409,23 @@ int main(int argc, char* argv[])    {
     meanclassdiv /= nrep;
     meanzfdiv /= nrep;
 
+    double totA = 0;
+    double totA2 = 0;
+    int totcount = 0;
+    for (auto& p : allelic_class_A)  {
+        totA += allelic_class_A[p.first];
+        totA2 += allelic_class_A2[p.first];
+        totcount++;
+    }
+    double tau1 = totA2 / totA * every;
+    double tau2 = totA / totcount * every;
+
     ofstream sos((name + ".summary").c_str());
     sos << U << '\t' << C << '\t' << rho << '\t' << alpha << '\t' << meanrec << '\t' << meandiv << '\t' << meanclassdiv << '\t' << meanzfdiv << '\n';
     cout << U << '\t' << C << '\t' << rho << '\t' << alpha << '\t' << meanrec << '\t' << meandiv << '\t' << meanclassdiv << '\t' << meanzfdiv << '\n';
+    cout << tau2 << '\t' << tau2 * meanclassdiv << '\n';
+    cout << tau1 << '\t' << tau1 * meanclassdiv << '\n';
+
+
 }
 
