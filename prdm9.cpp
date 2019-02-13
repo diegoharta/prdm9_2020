@@ -13,6 +13,8 @@ using namespace std;
 static random_device rdev{};
 static default_random_engine e{rdev()};
 
+static double invasion_cutoff = 0.01;
+
 // return uniform number in (0..n-1)
 int choose(int n)   {
     uniform_int_distribution<int> d(0,n-1);
@@ -54,8 +56,14 @@ map<vector<int>, int> allele_count;
 map<vector<int>, double> allelic_class_activity;
 
 // summary statistics calculated on the fly
+map<vector<int>, double> allelic_class_maxfreq;
+map<vector<int>, double> allelic_class_A_cutoff;
+
+/*
 map<vector<int>, double> allelic_class_A;
 map<vector<int>, double> allelic_class_A2;
+*/
+
 /*
 map<vector<int>, double> zn_finger_A;
 map<vector<int>, double> zn_finger_A2;
@@ -66,7 +74,7 @@ map<vector<int>, double> zn_finger_A2;
 // attempt to make a new allele and add count copies in current population
 // check whether allele already exists in current population (in which case just add count)
 // check whether allelic class already exists; if not, then create it with an activity of 1.0
-void make_new_allele(const vector<int>& allele, int count) {
+void make_new_allele(const vector<int>& allele, int count, int N) {
 
     auto it = allele_count.find(allele);
     if (it == allele_count.end())   {
@@ -80,8 +88,12 @@ void make_new_allele(const vector<int>& allele, int count) {
     auto jt = allelic_class_activity.find(allelic_class);
     if (jt == allelic_class_activity.end()) {
         allelic_class_activity[allelic_class] = 1.0;
+        allelic_class_maxfreq[allelic_class] = ((double) count) / N;
+        allelic_class_A_cutoff[allelic_class] = 0;
+        /*
         allelic_class_A[allelic_class] = 0;
         allelic_class_A2[allelic_class] = 0;
+        */
     }
 }
 
@@ -263,8 +275,16 @@ void push_current_allelic_class_freqs() {
     }
     for (auto p : class_count) {
         double f = ((double) p.second) / tot;
+        /*
         allelic_class_A[p.first] += f;
         allelic_class_A2[p.first] += f*f;
+        if (allelic_class_maxfreq[p.first] < f) {
+            allelic_class_maxfreq[p.first] = f;
+        }
+        */
+        if (allelic_class_maxfreq[p.first] > invasion_cutoff)   {
+            allelic_class_A_cutoff[p.first] += f;
+        }
     }
 }
 
@@ -289,8 +309,10 @@ int main(int argc, char* argv[])    {
     int every = atoi(argv[7]);
     int until = atoi(argv[8]);
 
+    invasion_cutoff = atof(argv[9]);
+
     // name of simulation experiment
-    string name = argv[9];
+    string name = argv[10];
 
     // non-scaled point mutation rate and conversion rate per allele
     // Naa/(Naa-1): to allow for 'silent' point mutations
@@ -307,7 +329,7 @@ int main(int argc, char* argv[])    {
 
     // initialize population
     vector<int> founder(Nfinger*Nres,0);
-    make_new_allele(founder,2*N);
+    make_new_allele(founder, 2*N, 2*N);
 
     /*
     // prepare output streams
@@ -380,7 +402,7 @@ int main(int argc, char* argv[])    {
                 // create the n mutants and add them to the population
                 for (int k=0; k<n; k++) {
                     vector<int> new_allele = point_mutate(p.first);
-                    make_new_allele(new_allele,1);
+                    make_new_allele(new_allele, 1, 2*N);
                 }
             }
 
@@ -393,7 +415,7 @@ int main(int argc, char* argv[])    {
                 // create the n mutants and add them to the population
                 for (int k=0; k<n; k++) {
                     vector<int> new_allele = conv_mutate(p.first);
-                    make_new_allele(new_allele,1);
+                    make_new_allele(new_allele, 1, 2*N);
                 }
             }
 
@@ -446,19 +468,38 @@ int main(int argc, char* argv[])    {
     meanclassdiv /= nrep;
     meanzfdiv /= nrep;
 
+    /*
     double totA = 0;
     double totA2 = 0;
     int totcount = 0;
-    for (auto& p : allelic_class_A)  {
+    */
+
+    double totA_cutoff = 0;
+    int totcount_cutoff = 0;
+    for (auto& p : allelic_class_A_cutoff)  {
+        /*
         totA += allelic_class_A[p.first];
         totA2 += allelic_class_A2[p.first];
         totcount++;
+        */
+        if (allelic_class_maxfreq[p.first] > invasion_cutoff)   {
+            totA_cutoff += allelic_class_A_cutoff[p.first];
+            totcount_cutoff ++;
+        }
     }
+    /*
     double tau1 = totA2 / totA * every;
     double tau2 = totA / totcount * every;
+    */
+    double tau_cutoff = totA_cutoff / totcount_cutoff * every / 2 / N;
 
-    ofstream sos((name + ".summary").c_str());
+    // ofstream sos((name + ".summary").c_str());
     cout << "U\tC\trho\talpha\tmeanrec\tallele_div\tclass_div\tzf_div\tclass_T\n";
-    cout << U << '\t' << C << '\t' << rho << '\t' << alpha << '\t' << meanrec << '\t' << meandiv << '\t' << meanclassdiv << '\t' << meanzfdiv << '\t' << tau1*meanclassdiv << '\n';
+    cout << U << '\t' << C << '\t' << rho << '\t' << alpha << '\t' << meanrec << '\t' << meandiv << '\t' << meanclassdiv << '\t' << meanzfdiv << '\t' << tau_cutoff*meanclassdiv << '\n';
+
+    ofstream os((name + ".freqdist").c_str());
+    for (auto& p : allelic_class_A)  {
+        os << allelic_class_A[p.first] << '\t' << allelic_class_maxfreq[p.first] << '\n';
+    }
 }
 
