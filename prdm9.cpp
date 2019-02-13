@@ -53,17 +53,19 @@ map<vector<int>, int> allele_count;
 // activities of all allelic classes ever visited during simulation
 map<vector<int>, double> allelic_class_activity;
 
+// summary statistics calculated on the fly
 map<vector<int>, double> allelic_class_A;
 map<vector<int>, double> allelic_class_A2;
+/*
 map<vector<int>, double> zn_finger_A;
 map<vector<int>, double> zn_finger_A2;
-
+*/
 
 // OPERATIONS ON ALLELES AND ON POPULATION
 
 // attempt to make a new allele and add count copies in current population
 // check whether allele already exists in current population (in which case just add count)
-//  check whether allelic class already exists; if not, then create it with an activity of 1.0
+// check whether allelic class already exists; if not, then create it with an activity of 1.0
 void make_new_allele(const vector<int>& allele, int count) {
 
     auto it = allele_count.find(allele);
@@ -71,7 +73,7 @@ void make_new_allele(const vector<int>& allele, int count) {
         allele_count[allele] = count;
     }
     else    {
-        it->second += count;
+        allele_count[allele] += count;
     }
 
     auto allelic_class = vector<int>(allele.begin(), allele.begin() + Nbind*Nres);
@@ -102,6 +104,19 @@ vector<int> point_mutate(const vector<int>& allele) {
     int pos = choose(allele.size());
     // choose new amino acid (possibly equal to old one)
     new_allele[pos] = choose(Naa);
+
+    /*
+    // identify the (possibly new) zinc finger just created
+    // and initialize the corresponding summary stats
+    int i = pos / Nres;
+    vector<int> finger(allele.begin() + Nres*i, allele.begin() + Nres*(i+1));
+    auto it = zn_finger_A.find(finger);
+    if (it == zn_finger_A.end())    {
+        zn_finger_A[finger] = 0;
+        zn_finger_A2[finger] = 0;
+    }
+    */
+
     return new_allele;
 }
 
@@ -146,7 +161,7 @@ void print_allele(ostream& os, const vector<int>& allele)   {
 double get_mean_activity()  {
     double mean = 0;
     double tot = 0;
-    for (auto& p : allele_count)    {
+    for (auto p : allele_count)    {
         mean += p.second * get_activity(p.first);
         tot += p.second;
     }
@@ -157,15 +172,25 @@ double get_mean_activity()  {
 // get effective number of ZFs in an allele
 double get_zf_diversity(const vector<int>& allele)  {
 
+    // finger counts across array
     map<vector<int>, double> freq;
     for (int i=0; i<Nfinger; i++)   {
-        freq[vector<int>(allele.begin() + Nres*i, allele.begin() + Nres*(i+1))] ++;
+        vector<int> finger(allele.begin() + Nres*i, allele.begin() + Nres*(i+1));
+        auto it = freq.find(finger);
+        if (it == freq.end())   {
+            freq[finger] = 1.0;
+        }
+        else    {
+            freq[finger] ++;
+        }
     }
+    // get zf diversity
     double m2 = 0;
-    for (auto& p : freq) {
+    for (auto p : freq) {
         double f = p.second / Nfinger;
         m2 += f*f;
     }
+    // return inverse of diversity
     return 1.0 / m2;
 }
 
@@ -174,7 +199,7 @@ double get_mean_zf_diversity()  {
 
     double mean = 0;
     double tot = 0;
-    for (auto& p : allele_count)    {
+    for (auto p : allele_count)    {
         mean += p.second * get_zf_diversity(p.first);
         tot += p.second;
     }
@@ -186,11 +211,11 @@ double get_mean_zf_diversity()  {
 double get_allele_diversity()   {
 
     double tot = 0;
-    for (auto& p : allele_count)    {
+    for (auto p : allele_count)    {
         tot += p.second;
     }
     double m2 = 0;
-    for (auto& p : allele_count)    {
+    for (auto p : allele_count)    {
         double f = ((double) p.second) / tot;
         m2 += f*f;
     }
@@ -202,13 +227,19 @@ double get_allelic_class_diversity()    {
 
     map<vector<int>,int> class_count;
     int tot = 0;
-    for (auto& p : allele_count)    {
+    for (auto p : allele_count)    {
         auto allelic_class = vector<int>(p.first.begin(), p.first.begin() + Nbind*Nres);
-        class_count[allelic_class] += p.second;
+        auto it = class_count.find(allelic_class);
+        if (it == class_count.end())    {
+            class_count[allelic_class] = p.second;
+        }
+        else    {
+            class_count[allelic_class] += p.second;
+        }
         tot += p.second;
     }
     double m2 = 0;
-    for (auto& p : class_count) {
+    for (auto p : class_count) {
         double f = ((double) p.second) / tot;
         m2 += f*f;
     }
@@ -219,12 +250,18 @@ void push_current_allelic_class_freqs() {
 
     map<vector<int>,int> class_count;
     int tot = 0;
-    for (auto& p : allele_count)    {
+    for (auto p : allele_count)    {
         auto allelic_class = vector<int>(p.first.begin(), p.first.begin() + Nbind*Nres);
-        class_count[allelic_class] += p.second;
+        auto it = class_count.find(allelic_class);
+        if (it == class_count.end())    {
+            class_count[allelic_class] = p.second;
+        }
+        else    {
+            class_count[allelic_class] += p.second;
+        }
         tot += p.second;
     }
-    for (auto& p : class_count) {
+    for (auto p : class_count) {
         double f = ((double) p.second) / tot;
         allelic_class_A[p.first] += f;
         allelic_class_A2[p.first] += f*f;
@@ -316,7 +353,7 @@ int main(int argc, char* argv[])    {
             vector<double> freqs;
             freqs.reserve(allele_count.size());
             double tot = 0;
-            for (auto& p : allele_count)    {
+            for (auto p : allele_count)    {
                 double f = p.second * get_fitness(p.first,alpha);
                 freqs.push_back(f);
                 tot += f;
@@ -421,11 +458,7 @@ int main(int argc, char* argv[])    {
     double tau2 = totA / totcount * every;
 
     ofstream sos((name + ".summary").c_str());
-    sos << U << '\t' << C << '\t' << rho << '\t' << alpha << '\t' << meanrec << '\t' << meandiv << '\t' << meanclassdiv << '\t' << meanzfdiv << '\n';
-    cout << U << '\t' << C << '\t' << rho << '\t' << alpha << '\t' << meanrec << '\t' << meandiv << '\t' << meanclassdiv << '\t' << meanzfdiv << '\n';
-    cout << tau2 << '\t' << tau2 * meanclassdiv << '\n';
-    cout << tau1 << '\t' << tau1 * meanclassdiv << '\n';
-
-
+    cout << "U\tC\trho\talpha\tmeanrec\tallele_div\tclass_div\tzf_div\tclass_T\n";
+    cout << U << '\t' << C << '\t' << rho << '\t' << alpha << '\t' << meanrec << '\t' << meandiv << '\t' << meanclassdiv << '\t' << meanzfdiv << '\t' << tau1*meanclassdiv << '\n';
 }
 
