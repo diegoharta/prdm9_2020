@@ -25,10 +25,15 @@ static const unsigned int Nbind = 3;
 static const unsigned int Naa = 10;
 
 static double invasion_cutoff = 0.01;
-static double zf_invasion_cutoff = invasion_cutoff / Nfinger;
+static double zf_invasion_cutoff = invasion_cutoff;
+// detailed output deactivated 
+static int write_history = 0;
 static int max_class = 100;
 static int max_zf = 100;
-static int write_history = 0;
+// another format for writing history of zfs and allelic classes
+// static int write_history = 2;
+// static int max_class = 40;
+// static int max_zf = 10;
 
 // return uniform number in (0..n-1)
 int choose(int n)   {
@@ -61,12 +66,14 @@ map<vector<int>, double> allelic_class_activity;
 
 map<vector<int>, double> allelic_class_maxfreq;
 map<vector<int>, double> allelic_class_cutoff_activity;
+map<vector<int>, int> allelic_class_cutoff_moment;
 
 map<vector<int>, double> zf_maxfreq;
 map<vector<int>, int> zf_index;
 map<vector<int>, double> zf_cutoff_activity;
+map<vector<int>, int> zf_cutoff_moment;
 
-map<vector<int>, int> zf2_index;
+map<vector<int>, int> zf_bind;
 
 // OPERATIONS ON ALLELES AND ON POPULATION
 
@@ -264,7 +271,7 @@ double get_allelic_class_diversity()    {
     return 1.0 / m2;
 }
 
-void push_current_allelic_class_freqs(ostream& hos, ostream& aos) {
+void push_current_allelic_class_freqs(ostream& hos, ostream& aos, int generation) {
 
     map<vector<int>,int> class_count;
     map<vector<int>,double> class_activity;
@@ -290,22 +297,29 @@ void push_current_allelic_class_freqs(ostream& hos, ostream& aos) {
         if (allelic_class_maxfreq[p.first] < f) {
             if ((f >= invasion_cutoff) && (allelic_class_maxfreq[p.first] < invasion_cutoff)) {
                 allelic_class_cutoff_activity[p.first] = class_activity[p.first];
-                for (int i=0; i<Nfinger; i++)   {
+                allelic_class_cutoff_moment[p.first] = generation;
+                for (int i=0; i<Nbind; i++)   {
                     vector<int> finger(p.first.begin() + Nres*i, p.first.begin() + Nres*(i+1));
-                    zf2_index[finger] = i;
+                    zf_bind[finger] = 1;
                 }
             }
             allelic_class_maxfreq[p.first] = f;
         }
-        if (write_history)  {
-            // print allelic class code
+        if (write_history == 1)  {
             for (auto i : p.first) {
                 hos << i;
             }
             hos << '\t';
             aos << f << '\t';
+            nclass++;
         }
-        nclass++;
+        if ((write_history == 2) && (f >= invasion_cutoff)) {
+            for (auto i : p.first) {
+                hos << i;
+            }
+            hos << " ";
+            nclass++;
+        }
     }
     if (write_history)  {
         if (nclass > max_class) {
@@ -313,18 +327,28 @@ void push_current_allelic_class_freqs(ostream& hos, ostream& aos) {
             exit(1);
         }
         for (int i=nclass; i<max_class; i++)    {
-            hos << 0 << '\t';
-            aos << 0 << '\t';
+            if (write_history == 1) {
+                hos << 0 << " ";
+                aos << 0 << '\t';
+            }
+            if (write_history == 2) {
+                for (int k=0; k<Nbind*Nres; k++)    {
+                    hos << " ";
+                }
+                hos << " ";
+            }
         }
         hos << '\n';
-        aos << '\n';
         hos.flush();
-        aos.flush();
+        if (write_history == 1) {
+            aos << '\n';
+            aos.flush();
+        }
     }
 }
 
 // returns effective number of zn fingers in current population
-double push_current_zf_freqs(ostream& hos, ostream& aos) {
+double push_current_zf_freqs(ostream& hos, ostream& aos, int generation) {
 
     map<vector<int>,int> zf_count;
     map<vector<int>,double> zf_activity;
@@ -356,34 +380,51 @@ double push_current_zf_freqs(ostream& hos, ostream& aos) {
         if (zf_maxfreq[p.first] < f) {
             if ((f >= zf_invasion_cutoff) && (zf_maxfreq[p.first] < zf_invasion_cutoff)) {
                 zf_cutoff_activity[p.first] = zf_activity[p.first];
+                zf_cutoff_moment[p.first] = generation;
             }
             zf_maxfreq[p.first] = f;
         }
-        if (write_history)  {
+        if (write_history == 1)  {
             // print allelic class code
             for (auto i : p.first) {
                 hos << i;
             }
             hos << '\t';
             aos << f << '\t';
+            nzf++;
         }
-        // mean_zf_activity += zf_activity[p.first];
-        nzf++;
+        if ((write_history == 2) && (f >= zf_invasion_cutoff)) {
+            // print allelic class code
+            for (auto i : p.first) {
+                hos << i;
+            }
+            hos << " ";
+            nzf++;
+        }
     }
-    // mean_zf_activity /= nzf;
     if (write_history)  {
         if (nzf > max_zf) {
             cerr << "error: overflow in zf class file\n";
             exit(1);
         }
         for (int i=nzf; i<max_zf; i++)    {
-            hos << 0 << '\t';
-            aos << 0 << '\t';
+            if (write_history == 1) {
+                hos << 0 << '\t';
+                aos << 0 << '\t';
+            }
+            if (write_history == 2) {
+                for (int k=0; k<Nres; k++)  {
+                    hos << " ";
+                }
+                hos << " ";
+            }
         }
         hos << '\n';
-        aos << '\n';
         hos.flush();
-        aos.flush();
+        if (write_history == 1) {
+            aos << '\n';
+            aos.flush();
+        }
     }
     return 1.0 / m2;
 }
@@ -563,8 +604,8 @@ int main(int argc, char* argv[])    {
         // trace and save summary statistics
         if (i>=burnin)  {
 
-            push_current_allelic_class_freqs(hos,aos);
-            double zfdivpop = push_current_zf_freqs(zhos,zaos);
+            push_current_allelic_class_freqs(hos,aos,i-burnin);
+            double zfdivpop = push_current_zf_freqs(zhos,zaos,i-burnin);
 
             // save summary statistics
             double R = get_mean_activity();
@@ -621,14 +662,9 @@ int main(int argc, char* argv[])    {
     double within_frac = ((double) within) / ztotcount_cutoff;
 
     int ztotcount2 = 0;
-    int within2 = 0;
-    for (auto& p : zf2_index)   {
+    for (auto& p : zf_bind)   {
         ztotcount2++;
-        if (p.second < Nbind)   {
-            within2++;
-        }
     }
-    double within_frac2 = ((double) within2) / ztotcount2;
     double tau_z2 = ((double) (until-burnin)) / ztotcount2 * every / 2 / N;
     double invrate_z2 = 1.0 / tau_z2;
 
@@ -653,7 +689,7 @@ int main(int argc, char* argv[])    {
     cout << "ratio of class / zf invasion rates                : " << invrate_class / invrate_z << '\t' << invrate_class / invrate_z2 << '\n';
     cout << "max class div based on zf div                     : " << predclassdiv0 << '\t' << predclassdiv << '\n';
     cout << "pred zf inv rate U*(s0 (-c))                      : " << predinvrate_z2 << '\t' << predinvrate_z1 << '\n';
-    cout << "frac of invading zf created within binding region : " << within_frac << '\t' << within_frac2 << '\n';
+    cout << "frac of invading zf created within binding region : " << within_frac << '\n';
     cout << "mean cutoff activity of invading zfs              : " << mean_zf_cutoff_activity << '\n';
     cout << "mean cutoff activity of invading allelic classes  : " << mean_allelic_class_cutoff_activity << '\n';
     cout << '\n';
