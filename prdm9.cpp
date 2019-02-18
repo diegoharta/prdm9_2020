@@ -26,8 +26,9 @@ static const unsigned int Naa = 10;
 
 static double invasion_cutoff = 0.01;
 static double zf_invasion_cutoff = invasion_cutoff;
+// static double zf_invasion_cutoff = invasion_cutoff / Nfinger;
 // detailed output deactivated 
-static int write_history = 0;
+static int write_history = 1;
 static int max_class = 100;
 static int max_zf = 100;
 // another format for writing history of zfs and allelic classes
@@ -509,6 +510,8 @@ int main(int argc, char* argv[])    {
     double meanzfdivpop = 0;
     // selection coefficient for new allele
     double means0 = 0;
+    double meaninvs0 = 0;
+    double meanlogs0 = 0;
     // number of iterations for which statistics were saved
     double nrep = 0;
 
@@ -616,6 +619,8 @@ int main(int argc, char* argv[])    {
             meanzfdivpop += zfdivpop;
             double s0 = log(get_fitness(1.0,alpha) / get_mean_fitness(alpha));
             means0 += s0;
+            meaninvs0 += 1.0 / s0;
+            meanlogs0 += log(s0);
             nrep++;
         }
     }
@@ -627,6 +632,8 @@ int main(int argc, char* argv[])    {
     meanzfdivpop /= nrep;
 
     means0 /= nrep;
+    meaninvs0 /= nrep;
+    meanlogs0 /= nrep;
 
     int totcount_cutoff = 0;
     double mean_allelic_class_cutoff_activity = 0;
@@ -675,11 +682,21 @@ int main(int argc, char* argv[])    {
     // selection coefficient for new alleles
     // linearized approximation
     double meanS0 = 4 * N * means0;
+    double meanharmS0 = 4 * N / meaninvs0;
+    double meangeomS0 = 4 * N * exp(meanlogs0);
     double preds0 = alpha * (1-meanrec) / 2 / meanrec;
     double predS0 = 4 * N * preds0;
     // invasion rate per 2N generation
-    double predinvrate_z1 = 2 * N * Nres * Nbind * U * (means0 - c/Nfinger);
-    double predinvrate_z2 = 2 * N * Nres * Nbind * U * means0;
+    // double predinvrate_z1 = 2 * N * Nres * Nbind * U * (means0 - c/Nfinger);
+    double predinvrate_z = 2 * N * Nres * Nbind * U * means0;
+    double predinvrate_z2 = 2 * N * Nres * Nbind * U / meaninvs0;
+    double predinvrate_z3 = 2 * N * Nres * Nbind * U * exp(meanlogs0);
+
+    double k = exp(log(meanclassdiv) / Nbind);
+    double predinvrate_class = 2 * N * Nbind * meanzfdivpop / 2 * C * means0;
+    // double predinvrate_class = 2 * N * Nbind * (meanzfdivpop - k - 1) * C * means0;
+    double predinvrate_class2 = 2 * N * Nbind * (meanzfdivpop - k - 1) * C / meaninvs0;
+    double predinvrate_class3 = 2 * N * Nbind * (meanzfdivpop - k - 1) * C * exp(meanlogs0);
 
 
     cout << "U\tC\trho\talpha\tmeanrecomb\tcl_div\tzf_div\tcl_inv\tzf_inv\tzf_inv2\t4Ns\n";
@@ -688,7 +705,10 @@ int main(int argc, char* argv[])    {
     cout << "predicted 4Ns (linearized)                        : " << predS0 << '\n';
     cout << "ratio of class / zf invasion rates                : " << invrate_class / invrate_z << '\t' << invrate_class / invrate_z2 << '\n';
     cout << "max class div based on zf div                     : " << predclassdiv0 << '\t' << predclassdiv << '\n';
-    cout << "pred zf inv rate U*(s0 (-c))                      : " << predinvrate_z2 << '\t' << predinvrate_z1 << '\n';
+    cout << "pred zf inv rate                                  : " << predinvrate_z << '\n';
+    cout << "pred class inv rate                               : " << predinvrate_class << '\n';
+    // cout << "ratio of predicted inv rates                      : " << predinvrate_class / predinvrate_z << '\n';
+    cout << '\n';
     cout << "frac of invading zf created within binding region : " << within_frac << '\n';
     cout << "mean cutoff activity of invading zfs              : " << mean_zf_cutoff_activity << '\n';
     cout << "mean cutoff activity of invading allelic classes  : " << mean_allelic_class_cutoff_activity << '\n';
