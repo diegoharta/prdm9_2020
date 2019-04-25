@@ -22,15 +22,18 @@ static const unsigned int Nres = 3;
 // number of binding fingers (first in the list)
 static const unsigned int Nbind = 3;
 // number of amino-acids
-static const unsigned int Naa = 10;
+static const unsigned int Naa = 5;
 
 static double invasion_cutoff = 0.01;
 static double zf_invasion_cutoff = invasion_cutoff;
 // static double zf_invasion_cutoff = invasion_cutoff / Nfinger;
 // detailed output deactivated 
-static int write_history = 1;
-static int max_class = 100;
-static int max_zf = 100;
+static int write_history = 2;
+static int gene_conversion_model = 1;
+static int max_class = 1000;
+static int max_zf = 1000;
+
+static double invMeanTractLength = 0.14;
 // another format for writing history of zfs and allelic classes
 // static int write_history = 2;
 // static int max_class = 40;
@@ -58,6 +61,12 @@ vector<int> multinomial_draw(int n, const vector<double>& p)    {
     return ret;
 }
 
+//geometric
+int geometric_draw(double p){
+    geometric_distribution<int> geomDis(p);
+    return geomDis(e);
+}
+
 // DATA STRUCTURES 
 
 // counts of all alleles of current population (cleaned up of absent alleles after each cycle)
@@ -76,16 +85,38 @@ map<vector<int>, int> zf_cutoff_moment;
 
 map<vector<int>, int> zf_bind;
 
+//GLOBAL VARIABLES
+int totalConvertedResidues = 0;
+
+int totalPointMuts = 0;  
+int totalAlleleEffPointMuts = 0;
+int totalAllelicClassEffPointMuts = 0;
+
+int totalGeneConvMuts = 0;
+int totalAlleleEffGeneConvMuts = 0;
+int totalAllelicClassEffGeneConvMuts = 0;
+
 // OPERATIONS ON ALLELES AND ON POPULATION
 
 // attempt to make a new allele and add count copies in current population
 // check whether allele already exists in current population (in which case just add count)
 // check whether allelic class already exists; if not, then create it with an activity of 1.0
-void make_new_allele(const vector<int>& allele, int count) {
+void make_new_allele(const vector<int>& allele, int count, int type) {
 
+    if(type == 1){
+        totalPointMuts++;
+    }   
+    else if(type == 2){
+         totalGeneConvMuts++;   
+    }
     auto it = allele_count.find(allele);
     if (it == allele_count.end())   {
         allele_count[allele] = count;
+        if(type == 1){
+            totalAlleleEffPointMuts++;
+        }else if(type == 2){
+            totalAlleleEffGeneConvMuts++;
+        }
     }
     else    {
         allele_count[allele] += count;
@@ -98,6 +129,11 @@ void make_new_allele(const vector<int>& allele, int count) {
         // not quite 0, but below threshold anyway
         allelic_class_maxfreq[allelic_class] = 0;
         allelic_class_cutoff_activity[allelic_class] = 1.0;
+        if(type == 1){
+            totalAllelicClassEffPointMuts++;
+        }else if(type == 2){
+            totalAllelicClassEffGeneConvMuts++;
+        }
     }
 }
 
@@ -119,7 +155,7 @@ vector<int> point_mutate(const vector<int>& allele) {
     // choose position
     int pos = choose(allele.size());
     // choose new amino acid (possibly equal to old one)
-    new_allele[pos] = choose(Naa);
+    new_allele[pos] = choose(Naa)+1;
 
     // identify the (possibly new) zinc finger just created
     // and initialize the corresponding summary stats
@@ -146,6 +182,42 @@ vector<int> conv_mutate(const vector<int>& allele)  {
     for (auto i=0; i<Nres; i++) {
         new_allele[finger2*Nres+i] = new_allele[finger1*Nres+i];
     }
+    return new_allele;
+}
+
+
+// make random conversion event, return mutated allele
+vector<int> conv_mutate_2(const vector<int>& allele)  {
+    vector<int> new_allele(allele);
+    int beginDonorFinger = choose(Nfinger);
+    int beginAcceptorFinger = choose(Nfinger-1);
+    int conversionLength = geometric_draw(invMeanTractLength)+1;
+    //cout << conversionLength << "\t";
+    int beginResidue = choose(Nres);
+    
+    int convertedResidues = 0;
+    int beginDonorPos = beginDonorFinger*Nres+beginResidue;
+    int beginAcceptorPos = beginAcceptorFinger*Nres+beginResidue;
+    int acceptorPos = beginAcceptorPos;
+
+    if(beginAcceptorFinger < beginDonorFinger){
+        while(convertedResidues<conversionLength && acceptorPos<beginDonorPos && (beginDonorPos+convertedResidues)<(Nfinger*Nres)){
+            new_allele[acceptorPos] = new_allele[beginDonorPos+convertedResidues];
+            //cout << "newAllele[" << acceptorPos << "]=newAllele[" << beginDonorPos+convertedResidues << "]\n";
+            convertedResidues++;
+            acceptorPos++; 
+        } 
+    }else{
+        beginAcceptorPos = (beginAcceptorFinger+1)*Nres+beginResidue;
+        acceptorPos = beginAcceptorPos;
+        while(convertedResidues<conversionLength && beginAcceptorPos>(beginDonorPos+convertedResidues) && acceptorPos<(Nfinger*Nres)){
+            new_allele[acceptorPos] = new_allele[beginDonorPos+convertedResidues];
+            //cout << "newAllele[" << acceptorPos << "]=newAllele[" << beginDonorPos+convertedResidues << "]\n";
+            convertedResidues++;
+            acceptorPos++; 
+        }
+    }
+    totalConvertedResidues+=convertedResidues;
     return new_allele;
 }
 
@@ -272,7 +344,7 @@ double get_allelic_class_diversity()    {
     return 1.0 / m2;
 }
 
-void push_current_allelic_class_freqs(ostream& hos, ostream& aos, int generation) {
+void push_current_allelic_class_freqs(ostream& hos, ostream& aos, ostream& mos, int generation) {
 
     map<vector<int>,int> class_count;
     map<vector<int>,double> class_activity;
@@ -295,6 +367,7 @@ void push_current_allelic_class_freqs(ostream& hos, ostream& aos, int generation
     for (auto p : class_count) {
         double f = ((double) p.second) / tot;
         class_activity[p.first] /= p.second;
+        double act = ((double) class_activity[p.first]);
         if (allelic_class_maxfreq[p.first] < f) {
             if ((f >= invasion_cutoff) && (allelic_class_maxfreq[p.first] < invasion_cutoff)) {
                 allelic_class_cutoff_activity[p.first] = class_activity[p.first];
@@ -312,13 +385,14 @@ void push_current_allelic_class_freqs(ostream& hos, ostream& aos, int generation
             }
             hos << '\t';
             aos << f << '\t';
+            mos << act << '\t';
             nclass++;
         }
         if ((write_history == 2) && (f >= invasion_cutoff)) {
             for (auto i : p.first) {
                 hos << i;
             }
-            hos << " ";
+            hos << "\t";
             nclass++;
         }
     }
@@ -329,8 +403,9 @@ void push_current_allelic_class_freqs(ostream& hos, ostream& aos, int generation
         }
         for (int i=nclass; i<max_class; i++)    {
             if (write_history == 1) {
-                hos << 0 << " ";
+                hos << 0 << '\t';
                 aos << 0 << '\t';
+                mos << 0 << '\t';
             }
             if (write_history == 2) {
                 for (int k=0; k<Nbind*Nres; k++)    {
@@ -344,12 +419,98 @@ void push_current_allelic_class_freqs(ostream& hos, ostream& aos, int generation
         if (write_history == 1) {
             aos << '\n';
             aos.flush();
+            mos << '\n';
+            mos.flush();
+             
         }
     }
 }
 
 // returns effective number of zn fingers in current population
-double push_current_zf_freqs(ostream& hos, ostream& aos, int generation) {
+double push_current_zf_freqs(ostream& hos, ostream& aos, int generation, int limit) {
+
+    map<vector<int>,int> zf_count;
+    map<vector<int>,double> zf_activity;
+    int tot = 0;
+    for (auto p : allele_count)    {
+        double allele_activity = get_activity(p.first);
+        for (int i=0; i<limit; i++)   {
+            vector<int> finger(p.first.begin() + Nres*i, p.first.begin() + Nres*(i+1));
+            auto it = zf_count.find(finger);
+            if (it == zf_count.end())   {
+                zf_count[finger] = p.second;
+                zf_activity[finger] = p.second * allele_activity;
+            }
+            else    {
+                zf_count[finger] += p.second;
+                zf_activity[finger] += p.second * allele_activity;
+            }
+            tot += p.second;
+        }
+    }
+
+    int nzf = 0;
+    double m2 = 0;
+    // double mean_zf_activity = 0;
+    for (auto p : zf_count) {
+        double f = ((double) p.second) / tot;
+        zf_activity[p.first] /= p.second;
+        m2 += f*f;
+        if (zf_maxfreq[p.first] < f) {
+            if ((f >= zf_invasion_cutoff) && (zf_maxfreq[p.first] < zf_invasion_cutoff)) {
+                zf_cutoff_activity[p.first] = zf_activity[p.first];
+                zf_cutoff_moment[p.first] = generation;
+            }
+            zf_maxfreq[p.first] = f;
+        }
+        if (write_history == 1)  {
+            // print allelic class code
+            for (auto i : p.first) {
+                hos << i;
+            }
+            hos << '\t';
+            aos << f << '\t';
+            nzf++;
+        }
+        if ((write_history == 2) && (f >= zf_invasion_cutoff)) {
+            // print allelic class code
+            for (auto i : p.first) {
+                hos << i;
+            }
+            hos << " ";
+            nzf++;
+        }
+    }
+    if (write_history)  {
+        if (nzf > max_zf) {
+            cerr << "error: overflow in zf class file\n";
+            exit(1);
+        }
+        for (int i=nzf; i<max_zf; i++)    {
+            if (write_history == 1) {
+                hos << 0 << '\t';
+                aos << 0 << '\t';
+            }
+            if (write_history == 2) {
+                for (int k=0; k<Nres; k++)  {
+                    hos << " ";
+                }
+                hos << " ";
+            }
+        }
+        hos << '\n';
+        hos.flush();
+        if (write_history == 1) {
+            aos << '\n';
+            aos.flush();
+        }
+    }
+    return 1.0 / m2;
+}
+
+
+// returns effective number of zn fingers in current population
+/*double push_current_zf_freqs(ostream& hos, ostream& aos, int generation) {
 
     map<vector<int>,int> zf_count;
     map<vector<int>,double> zf_activity;
@@ -429,7 +590,7 @@ double push_current_zf_freqs(ostream& hos, ostream& aos, int generation) {
     }
     return 1.0 / m2;
 }
-
+*/
 // returns effective number of zn fingers in current population
 double get_zfdivpop()   {
 
@@ -495,9 +656,10 @@ int main(int argc, char* argv[])    {
     }
 
     // initialize population
-    vector<int> founder(Nfinger*Nres,0);
-    make_new_allele(founder, 2*N);
-
+    for(int j = 0; j<Naa; j++){
+        vector<int> founder(Nfinger*Nres,j+1);
+        make_new_allele(founder, 2*N/Naa, 0);
+    }
     // summary statistic computed on the fly
     // mean allelic diversity
     double meandiv = 0;
@@ -517,9 +679,13 @@ int main(int argc, char* argv[])    {
 
     ofstream hos((name + ".allelic_class_history").c_str());
     ofstream aos((name + ".allelic_class_freq_history").c_str());
+    ofstream mos((name + ".alelic_class_act_history").c_str());
 
     ofstream zhos((name + ".zf_history").c_str());
     ofstream zaos((name + ".zf_freq_history").c_str());
+
+    ofstream zhosB((name + ".zf_history_bind").c_str());
+    ofstream zaosB((name + ".zf_freq_history_bind").c_str());
 
     // loop over entire simulation
     for (int i=0; i<until; i++) {
@@ -574,7 +740,7 @@ int main(int argc, char* argv[])    {
                 // create the n mutants and add them to the population
                 for (int k=0; k<n; k++) {
                     vector<int> new_allele = point_mutate(p.first);
-                    make_new_allele(new_allele, 1);
+                    make_new_allele(new_allele, 1, 1);
                 }
             }
 
@@ -585,9 +751,16 @@ int main(int argc, char* argv[])    {
                 // discount mutants from current count
                 p.second -= n;
                 // create the n mutants and add them to the population
-                for (int k=0; k<n; k++) {
-                    vector<int> new_allele = conv_mutate(p.first);
-                    make_new_allele(new_allele, 1);
+                if(gene_conversion_model == 1){
+                    for (int k=0; k<n; k++) {
+                        vector<int> new_allele = conv_mutate(p.first);
+                        make_new_allele(new_allele, 1, 2);
+                    }
+                }else if(gene_conversion_model == 2){
+                    for (int k=0; k<n; k++) {
+                        vector<int> new_allele = conv_mutate_2(p.first);
+                        make_new_allele(new_allele, 1, 2);
+                    }
                 }
             }
 
@@ -607,8 +780,9 @@ int main(int argc, char* argv[])    {
         // trace and save summary statistics
         if (i>=burnin)  {
 
-            push_current_allelic_class_freqs(hos,aos,i-burnin);
-            double zfdivpop = push_current_zf_freqs(zhos,zaos,i-burnin);
+            push_current_allelic_class_freqs(hos,aos,mos,i-burnin);
+            double zfdivpop = push_current_zf_freqs(zhos,zaos,i-burnin,Nfinger);
+            double zfdivbind = push_current_zf_freqs(zhosB,zaosB,i-burnin,Nbind);
 
             // save summary statistics
             double R = get_mean_activity();
@@ -698,20 +872,35 @@ int main(int argc, char* argv[])    {
     double predinvrate_class2 = 2 * N * Nbind * (meanzfdivpop - k - 1) * C / meaninvs0;
     double predinvrate_class3 = 2 * N * Nbind * (meanzfdivpop - k - 1) * C * exp(meanlogs0);
 
+    double realConvRate = ((double) (totalConvertedResidues)) / until / every / 2 / N / Nres;
 
-    cout << "U\tC\trho\talpha\tmeanrecomb\tcl_div\tzf_div\tcl_inv\tzf_inv\tzf_inv2\t4Ns\n";
-    cout << U << '\t' << C << '\t' << rho << '\t' << alpha << '\t' << meanrec << '\t' << meanclassdiv << '\t' << meanzfdivpop << '\t' << invrate_class << '\t' << invrate_z << '\t' << invrate_z2 << '\t' << meanS0 << '\n';
-    cout << '\n';
-    cout << "predicted 4Ns (linearized)                        : " << predS0 << '\n';
-    cout << "ratio of class / zf invasion rates                : " << invrate_class / invrate_z << '\t' << invrate_class / invrate_z2 << '\n';
-    cout << "max class div based on zf div                     : " << predclassdiv0 << '\t' << predclassdiv << '\n';
-    cout << "pred zf inv rate                                  : " << predinvrate_z << '\n';
-    cout << "pred class inv rate                               : " << predinvrate_class << '\n';
-    // cout << "ratio of predicted inv rates                      : " << predinvrate_class / predinvrate_z << '\n';
-    cout << '\n';
-    cout << "frac of invading zf created within binding region : " << within_frac << '\n';
-    cout << "mean cutoff activity of invading zfs              : " << mean_zf_cutoff_activity << '\n';
-    cout << "mean cutoff activity of invading allelic classes  : " << mean_allelic_class_cutoff_activity << '\n';
-    cout << '\n';
+    cout << "U\tC\trho\talpha\tmeanrecomb\tcl_div\tzf_div\tcl_inv\tzf_inv\tzf_inv2\t4Ns\t";
+    cout << "predicted4Ns\tratioClassZnfInvRate1\tratioClassZnfInvRate2\tMaxClassDivBasedOnZnmfDiv1\tMaxClassDivBasedOnZnmfDiv2\tPredZnfInvRate\tPredClassInvRate\t";
+    cout << "FracInvZnfBornWithinBindReg\tMeanCutoffActInvZnf\tMeanCutoffActInvClass\ttotalConvertedResidues\trealConvRate\ttheorConvRate\t";
+    cout << "totalPointMuts\ttotalAlleleEffPointMuts\ttotalAllelicClassEffPointMuts\ttotalGeneConvMuts\ttotalAlleleEffGeneConvMuts\ttotalAllelicClassEffGeneConvMuts\t";
+    cout << "meandiv\n";
+ 
+    cout << U << '\t' << C << '\t' << rho << '\t' << alpha << '\t' << meanrec << '\t' << meanclassdiv << '\t' << meanzfdivpop << '\t' << invrate_class << '\t' << invrate_z << '\t' << invrate_z2 << '\t' << meanS0 << '\t';
+    cout << predS0 << '\t' << invrate_class / invrate_z << '\t' << invrate_class / invrate_z2 << '\t' << predclassdiv0 << '\t' << predclassdiv << '\t' << predinvrate_z << '\t';
+    cout << predinvrate_class << '\t' << '\t' << within_frac << '\t' << mean_zf_cutoff_activity << '\t' << mean_allelic_class_cutoff_activity << '\t';
+    cout << totalConvertedResidues << '\t' << realConvRate << '\t' << c << '\t';
+    cout << totalPointMuts << '\t' << totalAlleleEffPointMuts << '\t' << totalAllelicClassEffPointMuts << '\t' << totalGeneConvMuts << '\t' << totalAlleleEffGeneConvMuts << '\t' << totalAllelicClassEffGeneConvMuts << '\t';
+    cout << meandiv << '\n';
+ 
+
+    // cout << "U\tC\trho\talpha\tmeanrecomb\tcl_div\tzf_div\tcl_inv\tzf_inv\tzf_inv2\t4Ns\n";
+    // cout << U << '\t' << C << '\t' << rho << '\t' << alpha << '\t' << meanrec << '\t' << meanclassdiv << '\t' << meanzfdivpop << '\t' << invrate_class << '\t' << invrate_z << '\t' << invrate_z2 << '\t' << meanS0 << '\n';
+    // cout << '\n';
+    // cout << "predicted 4Ns (linearized)                        : " << predS0 << '\n';
+    // cout << "ratio of class / zf invasion rates                : " << invrate_class / invrate_z << '\t' << invrate_class / invrate_z2 << '\n';
+    // cout << "max class div based on zf div                     : " << predclassdiv0 << '\t' << predclassdiv << '\n';
+    // cout << "pred zf inv rate                                  : " << predinvrate_z << '\n';
+    // cout << "pred class inv rate                               : " << predinvrate_class << '\n';
+    // // cout << "ratio of predicted inv rates                      : " << predinvrate_class / predinvrate_z << '\n';
+    // cout << '\n';
+    // cout << "frac of invading zf created within binding region : " << within_frac << '\n';
+    // cout << "mean cutoff activity of invading zfs              : " << mean_zf_cutoff_activity << '\n';
+    // cout << "mean cutoff activity of invading allelic classes  : " << mean_allelic_class_cutoff_activity << '\n';
+    // cout << '\n';
+
 }
-
