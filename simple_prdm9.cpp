@@ -51,6 +51,11 @@ vector<int> multinomial_draw(int n, const vector<double>& p)    {
 void create_allele(int in_count)    {
     allele_count[Nallele] = in_count;
     allele_activity[Nallele] = 1.0;
+    Nallele++;
+}
+
+void delete_allele(int allele)  {
+
 }
 
 void erode()    {
@@ -61,7 +66,6 @@ void erode()    {
 }
 
 void mutate()   {
-
     for (auto& p : allele_count)    {
         int nmut = binomial_draw(p.second, u);
         for (int i=0; i<nmut; i++)  {
@@ -72,7 +76,7 @@ void mutate()   {
 }
 
 double get_fitness(double activity) {
-    return exp(-alpha*log(activity));
+    return exp(alpha*log(activity));
 }
 
 double get_mean_fitness(int allele) {
@@ -90,24 +94,37 @@ void resample_population()  {
 
 }
 
+void cleanup_population()   {
+    vector<int> v;
+    for (auto& p : allele_count)    {
+        if (! p.second) {
+            v.push_back(p.first);
+        }
+    }
+    for (auto allele : v)   {
+        allele_count.erase(allele);
+        allele_activity.erase(allele);
+    }
+}
+
+// summary statistics 
+
 double get_mean_activity()  {
     double mean = 0;
     for (auto& p : allele_count)    {
+        // p.first: allele id
+        // p.second: count
+        double f = ((double) p.second) / 2 / N;
         double theta = allele_activity[p.first];
-        double f = ((double) p.first) / 2 / N;
         mean += f * theta;
     }
     return mean;
 }
 
 double get_diversity()  {
-    double tot = 0;
-    for (auto p : allele_count)    {
-        tot += p.second;
-    }
     double m2 = 0;
     for (auto p : allele_count)    {
-        double f = ((double) p.second) / tot;
+        double f = ((double) p.second) / 2 / N;
         m2 += f*f;
     }
     return 1.0 / m2;
